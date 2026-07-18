@@ -140,12 +140,177 @@ def export_copilot_sessions_to_excel(output_path: Path = None, watch: bool = Fal
 
 
 # ---------------------------------------------------------------------------
+# TASK: Sync vipingit1 repos to padmaimpex1-pixel on GitHub
+# ---------------------------------------------------------------------------
+
+def sync_gitrepos_to_padmaimpex(root: str = r"D:\GitRepos", target_owner: str = "padmaimpex1-pixel", dry_run: bool = False):
+    """
+    Scans all Git repos under `root`, and for any repo whose remote origin
+    points to `vipingit1`, re-points it to `padmaimpex1-pixel` and pushes.
+
+    Skips:
+      - Duplicate folders containing '-from-' in their name
+      - Third-party repos (not vipingit1 or padmaimpex1-pixel)
+      - Repos already on padmaimpex1-pixel (just pushes them)
+
+    Args:
+        root:         Root folder to scan for git repos.
+        target_owner: GitHub account to push to.
+        dry_run:      If True, print what would happen without making changes.
+    """
+    import subprocess, json, urllib.request, urllib.error
+
+    def run(cmd, cwd=None, capture=True):
+        r = subprocess.run(cmd, cwd=cwd, capture_output=capture, text=True)
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+
+    def get_git_token():
+        out, _, _ = run(['git', 'credential', 'fill'],)
+        # Try to get token from Windows credential manager via git
+        # Use a known working URL to extract token
+        import subprocess as sp
+        proc = sp.Popen(['git', 'credential', 'fill'], stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        stdout, _ = proc.communicate(input="protocol=https\nhost=github.com\n\n")
+        for line in stdout.splitlines():
+            if line.startswith('password='):
+                return line[len('password='):]
+        return None
+
+    def repo_exists_on_github(owner, repo_name, token):
+        url = f"https://api.github.com/repos/{owner}/{repo_name}"
+        req = urllib.request.Request(url, headers={"Authorization": f"token {token}", "User-Agent": "master.py"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            return True
+        except urllib.error.HTTPError as e:
+            return e.code != 404
+
+    def create_repo_on_github(owner, repo_name, token, private=True):
+        url = "https://api.github.com/user/repos"
+        data = json.dumps({"name": repo_name, "private": private, "auto_init": False}).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Authorization": f"token {token}",
+                                              "Content-Type": "application/json",
+                                              "User-Agent": "master.py"})
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            return True, "created"
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            if "already exists" in body or e.code == 422:
+                return True, "already_exists"
+            return False, f"HTTP {e.code}: {body[:200]}"
+
+    # Find all git repos
+    root_path = Path(root)
+    git_dirs = [p.parent for p in root_path.rglob('.git') if p.is_dir()]
+    git_dirs = sorted(set(git_dirs))
+
+    token = get_git_token()
+    if not token:
+        print("ERROR: Could not retrieve GitHub token from git credential manager.")
+        return
+
+    results = []
+    skipped = []
+
+    for repo_path in git_dirs:
+        name = repo_path.name
+
+        # Skip duplicates
+        if '-from-' in name:
+            skipped.append((str(repo_path), "duplicate"))
+            continue
+
+        remote_out, _, rc = run(['git', 'remote', 'get-url', 'origin'], cwd=str(repo_path))
+        if rc != 0 or not remote_out:
+            skipped.append((str(repo_path), "no_remote"))
+            continue
+
+        remote = remote_out.strip().rstrip('.git')
+        remote_lower = remote.lower()
+
+        # Already on target
+        if f"github.com/{target_owner.lower()}/" in remote_lower:
+            repo_name = remote.split('/')[-1]
+            status = "already_target"
+        elif "github.com/vipingit1/" in remote_lower:
+            repo_name = remote.split('/')[-1]
+            status = "vipingit1"
+        else:
+            skipped.append((str(repo_path), f"third_party: {remote}"))
+            continue
+
+        branch_out, _, _ = run(['git', 'branch', '--show-current'], cwd=str(repo_path))
+        branch = branch_out.strip() or "main"
+        new_remote = f"https://github.com/{target_owner}/{repo_name}.git"
+
+        print(f"\n[{name}]")
+        print(f"  Repo   : {repo_name}")
+        print(f"  Remote : {remote} -> {new_remote}")
+        print(f"  Branch : {branch}")
+
+        if dry_run:
+            print("  DRY_RUN: skipping actual changes")
+            results.append({"repo": name, "action": "dry_run", "target": new_remote})
+            continue
+
+        # Ensure repo exists on padmaimpex1-pixel
+        exists = repo_exists_on_github(target_owner, repo_name, token)
+        if not exists:
+            ok, msg = create_repo_on_github(target_owner, repo_name, token, private=True)
+            print(f"  Create : {msg}")
+            if not ok:
+                results.append({"repo": name, "action": "create_failed", "error": msg})
+                continue
+        else:
+            print(f"  Create : repo already exists on GitHub")
+
+        # Update remote
+        if status == "vipingit1":
+            run(['git', 'remote', 'set-url', 'origin', new_remote], cwd=str(repo_path))
+            print(f"  Remote updated to {new_remote}")
+
+        # Push
+        push_out, push_err, push_rc = run(['git', 'push', 'origin', branch, '--force-with-lease'], cwd=str(repo_path))
+        if push_rc == 0:
+            print(f"  PUSHED OK")
+            results.append({"repo": name, "action": "pushed", "target": new_remote})
+        else:
+            # Try without --force-with-lease
+            push_out2, push_err2, push_rc2 = run(['git', 'push', '--set-upstream', 'origin', branch], cwd=str(repo_path))
+            if push_rc2 == 0:
+                print(f"  PUSHED OK (set-upstream)")
+                results.append({"repo": name, "action": "pushed", "target": new_remote})
+            else:
+                print(f"  PUSH FAILED: {push_err or push_err2}")
+                results.append({"repo": name, "action": "push_failed", "error": push_err or push_err2})
+
+    print(f"\n\n=== SYNC SUMMARY ===")
+    pushed    = [r for r in results if r.get('action') == 'pushed']
+    failed    = [r for r in results if 'failed' in r.get('action','')]
+    print(f"  Pushed  : {len(pushed)}")
+    print(f"  Failed  : {len(failed)}")
+    print(f"  Skipped : {len(skipped)}")
+    if failed:
+        print("\n  FAILURES:")
+        for f in failed:
+            print(f"    {f['repo']}: {f.get('error','')[:120]}")
+    if skipped:
+        print("\n  SKIPPED:")
+        for s, reason in skipped:
+            print(f"    {Path(s).name}: {reason}")
+
+
+# ---------------------------------------------------------------------------
 # MENU
 # ---------------------------------------------------------------------------
 
 TASKS = {
     "1": ("Export Copilot sessions to Excel (once)", lambda: export_copilot_sessions_to_excel()),
     "2": ("Export Copilot sessions to Excel (watch/continuous)", lambda: export_copilot_sessions_to_excel(watch=True, interval_seconds=60)),
+    "3": ("Sync vipingit1 repos to padmaimpex1-pixel (dry run)", lambda: sync_gitrepos_to_padmaimpex(dry_run=True)),
+    "4": ("Sync vipingit1 repos to padmaimpex1-pixel (LIVE)", lambda: sync_gitrepos_to_padmaimpex(dry_run=False)),
 }
 
 if __name__ == "__main__":
