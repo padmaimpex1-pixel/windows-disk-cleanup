@@ -71,6 +71,7 @@ Repos are organized into category folders under `D:\GitRepos`:
 - The `export_copilot_sessions_to_excel()` function in `master.py` must always run in **continuous/watch mode** (i.e. `watch=True, interval_seconds=60`) as a background detached process, so the Excel file `D:\Generated-Outputs\copilot_sessions.xlsx` is always kept up to date with the latest Copilot session prompts and responses.
   - Start it with: `python -c "from master import export_copilot_sessions_to_excel; export_copilot_sessions_to_excel(watch=True, interval_seconds=60)"`
   - Run as a detached background process so it persists across agent responses.
+- For any long-running task (syncing repos, bulk operations, scanning), **print a status update every 2 minutes** showing progress, current item, and ETAssistant of completion. This keeps the user informed and prevents the appearance of hanging/stuck processes.
 
 ## 6. General Agent Behaviour
 
