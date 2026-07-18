@@ -68,6 +68,9 @@ Repos are organized into category folders under `D:\GitRepos`:
   - Commit message should describe the task the function performs.
 - Standalone scripts are allowed only when the task is genuinely isolated and unrelated to any existing master script.
 - Keep `D:\Generated-Outputs` as the default output path for any files the scripts produce.
+- The `export_copilot_sessions_to_excel()` function in `master.py` must always run in **continuous/watch mode** (i.e. `watch=True, interval_seconds=60`) as a background detached process, so the Excel file `D:\Generated-Outputs\copilot_sessions.xlsx` is always kept up to date with the latest Copilot session prompts and responses.
+  - Start it with: `python -c "from master import export_copilot_sessions_to_excel; export_copilot_sessions_to_excel(watch=True, interval_seconds=60)"`
+  - Run as a detached background process so it persists across agent responses.
 
 ## 6. General Agent Behaviour
 
