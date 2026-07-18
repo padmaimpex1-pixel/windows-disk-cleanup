@@ -900,6 +900,226 @@ def scan_all_drives(output_path: Path = None):
 
 
 # ---------------------------------------------------------------------------
+# TASK: Deep disk usage analysis - where is all the space going?
+# ---------------------------------------------------------------------------
+
+def analyze_disk_usage_by_directory(target_drive: str = "C:", output_path: Path = None, top_dirs: int = 50):
+    """
+    Analyzes disk usage by directory to find where all the space is going.
+    
+    Args:
+        target_drive: Drive to analyze (default: C:)
+        output_path: Where to save the report
+        top_dirs: Number of top directories to show (default: 50)
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.chart import BarChart, Reference
+    except ImportError:
+        print("openpyxl required. Run: pip install openpyxl")
+        return
+
+    if output_path is None:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR / f"disk_usage_{target_drive.replace(':', '')}_drive.xlsx"
+
+    output_path = Path(output_path)
+
+    print(f"Analyzing disk usage on {target_drive} drive...")
+    print("This may take several minutes...")
+
+    dir_sizes = {}
+    errors = 0
+    
+    # Common directories to skip
+    skip_dirs = [
+        'System Volume Information',
+        '$Recycle.Bin',
+        'hiberfil.sys',
+        'pagefile.sys',
+        'swapfile.sys'
+    ]
+
+    try:
+        root_path = Path(target_drive + "\\")
+        
+        for item in root_path.iterdir():
+            if item.is_dir():
+                dir_name = item.name
+                
+                if dir_name in skip_dirs:
+                    continue
+                
+                try:
+                    total_size = 0
+                    file_count = 0
+                    
+                    for root, dirs, files in os.walk(item):
+                        # Skip problematic directories
+                        dirs[:] = [d for d in dirs if d not in skip_dirs]
+                        
+                        for file in files:
+                            try:
+                                filepath = Path(root) / file
+                                total_size += filepath.stat().st_size
+                                file_count += 1
+                            except (PermissionError, OSError):
+                                errors += 1
+                    
+                    if total_size > 0:
+                        dir_sizes[dir_name] = {
+                            'Size GB': total_size / (1024**3),
+                            'Size MB': total_size / (1024**2),
+                            'Files': file_count,
+                        }
+                        
+                        if len(dir_sizes) % 5 == 0:
+                            print(f"  Scanned {len(dir_sizes)} directories...")
+                
+                except PermissionError:
+                    errors += 1
+            elif item.is_file():
+                # Files at root
+                try:
+                    size = item.stat().st_size
+                    if size > 0:
+                        if '[Root Files]' not in dir_sizes:
+                            dir_sizes['[Root Files]'] = {'Size GB': 0, 'Size MB': 0, 'Files': 0}
+                        dir_sizes['[Root Files]']['Size GB'] += size / (1024**3)
+                        dir_sizes['[Root Files]']['Size MB'] += size / (1024**2)
+                        dir_sizes['[Root Files]']['Files'] += 1
+                except (PermissionError, OSError):
+                    errors += 1
+
+    except Exception as e:
+        print(f"Error during analysis: {e}")
+
+    # Sort by size
+    sorted_dirs = sorted(dir_sizes.items(), key=lambda x: x[1]['Size GB'], reverse=True)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Disk Usage"
+
+    total_gb = sum(d[1]['Size GB'] for d in sorted_dirs)
+    total_files = sum(d[1]['Files'] for d in sorted_dirs)
+
+    ws['A1'] = f"{target_drive} Drive Disk Usage Analysis"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A2'] = f"Total: {total_gb:.2f} GB across {total_files:,} files"
+    ws['A2'].font = Font(italic=True, size=10)
+
+    headers = ['Directory', 'Size GB', 'Size MB', 'Percent %', 'File Count', 'Avg File Size MB']
+    header_fill = PatternFill("solid", fgColor="1F4E79")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    # Color scheme based on usage
+    high_fill = PatternFill("solid", fgColor="FF6B6B")  # Red >20%
+    med_fill = PatternFill("solid", fgColor="FFE699")   # Yellow 10-20%
+    low_fill = PatternFill("solid", fgColor="D9E1F2")   # Light blue
+
+    for r_idx, (dir_name, data) in enumerate(sorted_dirs[:top_dirs], start=4):
+        pct = (data['Size GB'] / total_gb * 100) if total_gb > 0 else 0
+        avg_file_size = data['Size MB'] / data['Files'] if data['Files'] > 0 else 0
+
+        # Choose color based on percentage
+        if pct > 20:
+            fill = high_fill
+        elif pct > 10:
+            fill = med_fill
+        else:
+            fill = low_fill
+
+        ws.cell(row=r_idx, column=1, value=dir_name).fill = fill
+        ws.cell(row=r_idx, column=1).font = Font(bold=True if pct > 15 else False)
+        ws.cell(row=r_idx, column=2, value=round(data['Size GB'], 2)).fill = fill
+        ws.cell(row=r_idx, column=3, value=round(data['Size MB'], 0)).fill = fill
+        ws.cell(row=r_idx, column=4, value=round(pct, 1)).fill = fill
+        ws.cell(row=r_idx, column=5, value=data['Files']).fill = fill
+        ws.cell(row=r_idx, column=6, value=round(avg_file_size, 2)).fill = fill
+
+        for col in range(2, 7):
+            ws.cell(row=r_idx, column=col).alignment = Alignment(horizontal="right")
+
+    col_widths = [35, 12, 12, 12, 12, 15]
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[chr(64+i)].width = w
+
+    # Add summary sheet
+    ws_summary = wb.create_sheet("Summary", 0)
+    ws_summary['A1'] = f"{target_drive} Drive Summary"
+    ws_summary['A1'].font = Font(bold=True, size=14)
+
+    summary_items = [
+        ('Total Capacity', f"{total_gb:.2f} GB"),
+        ('Total Used', f"{total_gb:.2f} GB"),
+        ('Total Files', f"{total_files:,}"),
+        ('Directories Scanned', len(dir_sizes)),
+        ('Access Errors', errors),
+        ('Average File Size', f"{(total_gb * 1024 / total_files):.2f} MB" if total_files > 0 else "N/A"),
+    ]
+
+    ws_summary['A3'] = 'Metric'
+    ws_summary['B3'] = 'Value'
+    for col in ['A', 'B']:
+        ws_summary[f'{col}3'].font = Font(bold=True)
+        ws_summary[f'{col}3'].fill = PatternFill("solid", fgColor="1F4E79")
+        ws_summary[f'{col}3'].font = Font(bold=True, color="FFFFFF")
+
+    row_num = 4
+    for metric, value in summary_items:
+        ws_summary[f'A{row_num}'] = metric
+        ws_summary[f'B{row_num}'] = value
+        row_num += 1
+
+    # Top categories
+    ws_summary['A12'] = "Top 15 Directories by Size"
+    ws_summary['A12'].font = Font(bold=True, size=12)
+
+    ws_summary['A14'] = "Directory"
+    ws_summary['B14'] = "Size GB"
+    ws_summary['C14'] = "% of Total"
+    for col in ['A', 'B', 'C']:
+        ws_summary[f'{col}14'].font = Font(bold=True)
+        ws_summary[f'{col}14'].fill = PatternFill("solid", fgColor="1F4E79")
+        ws_summary[f'{col}14'].font = Font(bold=True, color="FFFFFF")
+
+    row_num = 15
+    for dir_name, data in sorted_dirs[:15]:
+        pct = (data['Size GB'] / total_gb * 100) if total_gb > 0 else 0
+        ws_summary[f'A{row_num}'] = dir_name
+        ws_summary[f'B{row_num}'] = round(data['Size GB'], 2)
+        ws_summary[f'C{row_num}'] = f"{round(pct, 1)}%"
+        row_num += 1
+
+    ws_summary.column_dimensions['A'].width = 30
+    ws_summary.column_dimensions['B'].width = 12
+    ws_summary.column_dimensions['C'].width = 12
+
+    wb.save(output_path)
+
+    print("\n" + "="*80)
+    print("TOP 20 DIRECTORIES BY SIZE:")
+    print("="*80)
+    for i, (dir_name, data) in enumerate(sorted_dirs[:20], 1):
+        pct = (data['Size GB'] / total_gb * 100) if total_gb > 0 else 0
+        print(f"{i:2}. {dir_name:30} {data['Size GB']:>8.2f} GB ({pct:>5.1f}%) - {data['Files']:>8,} files")
+
+    print("\n" + "="*80)
+    print(f"TOTAL SPACE ANALYZED: {total_gb:.2f} GB")
+    print(f"TOTAL FILES FOUND: {total_files:,}")
+    print(f"ACCESS ERRORS: {errors}")
+    print("="*80)
+    print(f"\nDetailed report saved: {output_path}")
+
+
+# ---------------------------------------------------------------------------
 # TASK: Scan C drive and list all high size files
 # ---------------------------------------------------------------------------
 
