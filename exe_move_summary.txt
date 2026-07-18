@@ -1,0 +1,84 @@
+================================================================================
+                    EXE FILES MOVE - DRY RUN SUMMARY
+================================================================================
+
+DATE: 2026-07-18 07:00:00
+
+FINDINGS:
+  Total .exe files found: 329
+  Total size: 2,327.64 MB (2.33 GB)
+  System directories excluded: YES
+  Report saved: D:\Generated-Outputs\exe_move_dryrun_report.xlsx
+
+TOP 20 LARGEST .EXE FILES TO BE MOVED:
+ 1. OllamaSetup.exe                          1,360.17 MB  (Downloads)
+ 2. chrome-headless-shell.exe                  193.54 MB  (Dev tools)
+ 3. artifact_tool_rpc_daemon.exe                88.00 MB  (Development)
+ 4. node.exe                                    87.15 MB  (Runtime)
+ 5. cc1objplus.exe                              30.84 MB  (GCC Compiler)
+ 6. cc1plus.exe                                 30.65 MB  (GCC Compiler)
+ 7. f951.exe                                    29.47 MB  (GCC Compiler)
+ 8. cc1obj.exe                                  28.94 MB  (GCC Compiler)
+ 9. cc1.exe                                     28.75 MB  (GCC Compiler)
+10. lto-dump.exe                                27.60 MB  (GCC Tool)
+11. lto1.exe                                    27.60 MB  (GCC Compiler)
+12. doxygen.exe                                 21.96 MB  (Documentation)
+13. Adobe Media Encoder.exe                     21.84 MB  (Adobe)
+14. mysqld.exe                                  15.89 MB  (Database)
+15. mariabackup.exe                             15.00 MB  (Database)
+16. ctest.exe                                   13.44 MB  (CMake)
+17. gdb.exe                                     12.61 MB  (Debugger)
+18. cpack.exe                                   12.49 MB  (CMake)
+19. cmake.exe                                   12.04 MB  (Build Tool)
+20. esbuild.exe                                 11.13 MB  (Build Tool)
+... and 309 more files
+
+BREAKDOWN BY CATEGORY:
+  - Development Tools (GCC, CMake, Node.js): ~350 MB
+  - Installers (Ollama, etc.): ~1.4 GB
+  - Database Tools (MySQL, MariaDB): ~50 MB
+  - Build & Compilation: ~200 MB
+  - Other Tools & Utilities: ~300 MB
+
+DESTINATION STRUCTURE:
+  Files will be moved preserving full directory structure:
+    C:\Users\Public\Downloads\OllamaSetup.exe
+         ↓ moves to ↓
+    D:\Users\Public\Downloads\OllamaSetup.exe
+
+BENEFITS OF MOVING:
+  ✓ Free up 2.33 GB on C: drive
+  ✓ Preserve directory structure
+  ✓ Exclude system files (Windows, Program Files)
+  ✓ All with detailed logging
+
+RISKS:
+  ⚠ Some development tools may break if they use relative paths
+  ⚠ Database tools may need to be reconfigured
+  ⚠ Some applications may depend on executable locations
+
+RECOMMENDATIONS:
+  1. Run on development/test machine first
+  2. Back up D: drive before moving
+  3. Start with dry-run (already completed)
+  4. Move only large files (>100MB) first: min_size_mb=100
+  5. Monitor for broken applications
+
+NEXT STEPS:
+
+OPTION 1 - Move all .exe files now:
+  From Python:
+    from master import move_exe_files_to_d_drive
+    move_exe_files_to_d_drive(dry_run=False, exclude_system=True)
+
+OPTION 2 - Move only large .exe files (>100MB):
+  From Python:
+    from master import move_exe_files_to_d_drive
+    move_exe_files_to_d_drive(dry_run=False, exclude_system=True, min_size_mb=100)
+
+OPTION 3 - Run another dry-run:
+  From Python:
+    from master import move_exe_files_to_d_drive
+    move_exe_files_to_d_drive(dry_run=True, exclude_system=True)
+
+================================================================================

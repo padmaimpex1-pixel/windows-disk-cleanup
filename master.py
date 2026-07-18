@@ -1108,3 +1108,236 @@ def scan_c_drive_large_files(output_path: Path = None, min_size_mb: float = 100.
     print(f"  Files found: {len(files)}")
     print(f"  Total size: {total_size_gb:.2f} GB")
     print(f"  Output: {output_path}")
+
+
+# ---------------------------------------------------------------------------
+# TASK: Move .exe files from C: to D: drive
+# ---------------------------------------------------------------------------
+
+def move_exe_files_to_d_drive(dry_run: bool = True, exclude_system: bool = True, min_size_mb: float = 0):
+    """
+    Moves .exe files from C: to D: drive.
+    
+    Args:
+        dry_run: If True, only shows what would be moved (don't actually move)
+        exclude_system: If True, skips system directories (Windows, Program Files, etc.)
+        min_size_mb: Only move .exe files larger than this size (0 = all files)
+    """
+    try:
+        import shutil
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        print("openpyxl required. Run: pip install openpyxl")
+        return
+
+    print("="*80)
+    print(f"EXE FILE MOVE OPERATION - {'DRY RUN' if dry_run else 'ACTUAL MOVE'}")
+    print("="*80)
+
+    min_size_bytes = min_size_mb * (1024 * 1024)
+    c_drive = Path("C:\\")
+    d_drive = Path("D:\\")
+    
+    # System directories to exclude
+    exclude_dirs = [
+        'Windows', 'Program Files', 'Program Files (x86)', 'System32',
+        'ProgramData', 'AppData', 'System Volume Information', '$Recycle.Bin'
+    ]
+
+    print(f"\nScanning C: drive for .exe files...")
+    print(f"  Exclude system dirs: {exclude_system}")
+    print(f"  Minimum size: {min_size_mb}MB")
+    print()
+
+    exe_files = []
+    errors = []
+
+    try:
+        for root, dirs, filenames in os.walk(c_drive, topdown=True):
+            # Filter directories
+            if exclude_system:
+                dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            
+            for filename in filenames:
+                if filename.lower().endswith('.exe'):
+                    try:
+                        filepath = Path(root) / filename
+                        file_size = filepath.stat().st_size
+                        
+                        if file_size >= min_size_bytes:
+                            size_mb = file_size / (1024 * 1024)
+                            
+                            # Create destination path preserving structure
+                            rel_path = filepath.relative_to(c_drive)
+                            dest_path = d_drive / rel_path
+                            
+                            exe_files.append({
+                                'Source': str(filepath),
+                                'Destination': str(dest_path),
+                                'Size MB': round(size_mb, 2),
+                                'Status': 'Ready to move',
+                            })
+                    except (PermissionError, OSError) as e:
+                        errors.append({
+                            'File': str(Path(root) / filename),
+                            'Error': str(e),
+                        })
+    except Exception as e:
+        print(f"Error during scan: {e}")
+
+    # Sort by size
+    exe_files.sort(key=lambda x: x['Size MB'], reverse=True)
+
+    print(f"Found {len(exe_files)} .exe files to move")
+    print(f"Total size: {sum(f['Size MB'] for f in exe_files):.2f} MB")
+    
+    if errors:
+        print(f"Errors encountered: {len(errors)}")
+
+    # Show preview
+    print("\n" + "-"*80)
+    print("TOP 20 FILES TO MOVE:")
+    print("-"*80)
+    for i, exe in enumerate(exe_files[:20], 1):
+        print(f"{i:2}. {exe['Source'][-60:]:60} ({exe['Size MB']:>8.2f} MB)")
+
+    if len(exe_files) > 20:
+        print(f"    ... and {len(exe_files) - 20} more files")
+
+    if dry_run:
+        print("\n" + "="*80)
+        print("DRY RUN COMPLETE - No files moved")
+        print("="*80)
+        print("\nTo proceed with actual move, call:")
+        print(f"  move_exe_files_to_d_drive(dry_run=False, exclude_system=True, min_size_mb=0)")
+        
+        # Create a report anyway
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        report_path = OUTPUT_DIR / "exe_move_dryrun_report.xlsx"
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "DRY RUN Report"
+
+        ws['A1'] = "EXE Files Move - DRY RUN REPORT"
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A2'] = f"Total files: {len(exe_files)} | Total size: {sum(f['Size MB'] for f in exe_files):.2f} MB"
+        ws['A2'].font = Font(italic=True)
+
+        headers = ['Source Path', 'Destination Path', 'Size MB', 'Status']
+        header_fill = PatternFill("solid", fgColor="1F4E79")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+
+        for col, h in enumerate(headers, start=1):
+            cell = ws.cell(row=3, column=col, value=h)
+            cell.fill = header_fill
+            cell.font = header_font
+
+        alt_fill = PatternFill("solid", fgColor="D9E1F2")
+        for r_idx, exe in enumerate(exe_files, start=4):
+            fill = alt_fill if r_idx % 2 == 0 else PatternFill()
+            for col, key in enumerate(['Source', 'Destination', 'Size MB', 'Status'], start=1):
+                cell = ws.cell(row=r_idx, column=col, value=exe.get(key))
+                cell.fill = fill
+                if key == 'Size MB':
+                    cell.alignment = Alignment(horizontal="right")
+                else:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+        col_widths = [50, 50, 12, 15]
+        for i, w in enumerate(col_widths, start=1):
+            ws.column_dimensions[chr(64+i)].width = w
+
+        wb.save(report_path)
+        print(f"\nDry-run report saved: {report_path}")
+        
+    else:
+        # Actual move
+        print("\n" + "="*80)
+        print("MOVING FILES...")
+        print("="*80)
+
+        moved = []
+        failed = []
+
+        for i, exe in enumerate(exe_files, 1):
+            src = Path(exe['Source'])
+            dest = Path(exe['Destination'])
+            
+            try:
+                # Create destination directory
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Move file
+                shutil.move(str(src), str(dest))
+                
+                exe['Status'] = 'Moved'
+                moved.append(exe)
+                
+                if i % 10 == 0 or i == len(exe_files):
+                    print(f"  [{i}/{len(exe_files)}] Moved {exe['Size MB']:.2f} MB")
+                    
+            except Exception as e:
+                exe['Status'] = f'Failed: {str(e)}'
+                failed.append(exe)
+                print(f"  ERROR: {src.name} - {e}")
+
+        print("\n" + "="*80)
+        print(f"MOVE COMPLETE")
+        print("="*80)
+        print(f"Successfully moved: {len(moved)}")
+        print(f"Failed: {len(failed)}")
+        print(f"Total size moved: {sum(e['Size MB'] for e in moved):.2f} MB")
+
+        # Create detailed report
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        report_path = OUTPUT_DIR / f"exe_move_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        wb = openpyxl.Workbook()
+        
+        # Moved sheet
+        ws_moved = wb.active
+        ws_moved.title = "Moved"
+        ws_moved['A1'] = f"Successfully Moved: {len(moved)} files"
+        ws_moved['A1'].font = Font(bold=True, size=14, color="008000")
+
+        headers = ['Source Path', 'Destination Path', 'Size MB', 'Status']
+        header_fill = PatternFill("solid", fgColor="70AD47")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+
+        for col, h in enumerate(headers, start=1):
+            cell = ws_moved.cell(row=2, column=col, value=h)
+            cell.fill = header_fill
+            cell.font = header_font
+
+        for r_idx, exe in enumerate(moved, start=3):
+            for col, key in enumerate(['Source', 'Destination', 'Size MB', 'Status'], start=1):
+                cell = ws_moved.cell(row=r_idx, column=col, value=exe.get(key))
+                if key == 'Size MB':
+                    cell.alignment = Alignment(horizontal="right")
+
+        # Failed sheet
+        if failed:
+            ws_failed = wb.create_sheet("Failed")
+            ws_failed['A1'] = f"Failed: {len(failed)} files"
+            ws_failed['A1'].font = Font(bold=True, size=14, color="FF0000")
+
+            for col, h in enumerate(headers, start=1):
+                cell = ws_failed.cell(row=2, column=col, value=h)
+                cell.fill = PatternFill("solid", fgColor="FF6B6B")
+                cell.font = header_font
+
+            for r_idx, exe in enumerate(failed, start=3):
+                for col, key in enumerate(['Source', 'Destination', 'Size MB', 'Status'], start=1):
+                    cell = ws_failed.cell(row=r_idx, column=col, value=exe.get(key))
+                    if key == 'Size MB':
+                        cell.alignment = Alignment(horizontal="right")
+
+        col_widths = [50, 50, 12, 20]
+        for ws in [ws_moved] + ([ws_failed] if failed else []):
+            for i, w in enumerate(col_widths, start=1):
+                ws.column_dimensions[chr(64+i)].width = w
+
+        wb.save(report_path)
+        print(f"\nMove report saved: {report_path}")
