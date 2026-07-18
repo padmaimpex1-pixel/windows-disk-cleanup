@@ -57,7 +57,34 @@ def export_copilot_sessions_to_excel(output_path: Path = None, watch: bool = Fal
             return "Other"
         p = prompt_text.lower()
         
-        # URLs (check first)
+        # Social Media
+        if any(x in p for x in ['twitter', 'facebook', 'instagram', 'tiktok', 'reddit', 'linkedin', 
+                                'discord', 'slack', 'whatsapp', 'telegram', 'snapchat', 'pinterest',
+                                'youtube', 'twitch', 'mastodon', 'bluesky', 'threads', 'x.com',
+                                'social', 'post', 'tweet', 'share', 'viral', 'engagement', 'followers',
+                                'hashtag', '@mention', 'dm ', 'dm:', 'channel', 'community', 'group chat']):
+            return "Social Media"
+        
+        # Videos
+        if any(x in p for x in ['video', 'mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv',
+                                'codec', 'ffmpeg', 'premiere', 'davinci', 'resolve', 'final cut',
+                                'after effects', 'camtasia', 'obs', 'streaming', 'youtube', 'vimeo',
+                                'encoding', 'transcoding', 'resolution', '1080p', '4k', '8k',
+                                'frame rate', 'fps', 'bitrate', 'h.264', 'h.265', 'vp9',
+                                'video editing', 'motion', 'animation', 'subtitle', 'caption']):
+            return "Videos"
+        
+        # Photos & Images
+        if any(x in p for x in ['photo', 'image', 'picture', 'jpg', 'jpeg', 'png', 'gif', 'bmp',
+                                'svg', 'webp', 'tiff', 'raw', 'psd', 'ai', 'eps', 'pdf',
+                                'photoshop', 'gimp', 'lightroom', 'capture one', 'affinity',
+                                'exposure', 'aperture', 'shutter', 'iso', 'white balance',
+                                'pixel', 'resolution', 'dpi', 'crop', 'rotate', 'filter',
+                                'photography', 'photographic', 'screenshot', 'screenshot', 'canvas',
+                                'design', 'graphic', 'visual', 'illustration', 'artwork']):
+            return "Photos & Images"
+        
+        # URLs (check after media categories)
         if any(proto in p for proto in ['http://', 'https://', 'ftp://', 'ssh://', '.com', '.org', '.net', 'github.com', 'gitlab.com']):
             if any(x in p for x in ['http', 'https', 'ftp', '.com', '.org', '.net', 'url', 'link', 'web']):
                 return "URLs & Links"
