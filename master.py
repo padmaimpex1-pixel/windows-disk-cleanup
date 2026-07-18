@@ -897,3 +897,214 @@ def scan_all_drives(output_path: Path = None):
 
     wb.save(output_path)
     print(f"Drive scan report ({len(drives)} drives) -> {output_path}")
+
+
+# ---------------------------------------------------------------------------
+# TASK: Scan C drive and list all high size files
+# ---------------------------------------------------------------------------
+
+def scan_c_drive_large_files(output_path: Path = None, min_size_mb: float = 100.0, max_results: int = 1000):
+    """
+    Recursively scans C: drive and lists all large files.
+    
+    Args:
+        output_path: Where to save the report. Defaults to OUTPUT_DIR/large_files_c_drive.xlsx
+        min_size_mb: Minimum file size in MB to report (default: 100 MB)
+        max_results: Maximum number of files to report (default: 1000)
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        print("openpyxl required. Run: pip install openpyxl")
+        return
+
+    if output_path is None:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR / "large_files_c_drive.xlsx"
+
+    output_path = Path(output_path)
+
+    print(f"Scanning C: drive for files > {min_size_mb}MB...")
+    print("This may take several minutes depending on drive size and file count...")
+
+    files = []
+    skipped_dirs = []
+    min_size_bytes = min_size_mb * (1024 * 1024)
+    c_drive = Path("C:\\")
+    
+    # Common directories to skip (speeds up scan)
+    skip_patterns = [
+        r'$Recycle.Bin', 'System Volume Information', 'ProgramData', 
+        'hiberfil.sys', 'pagefile.sys', 'swapfile.sys',
+        'Windows\\System32', 'Windows\\WinSxS', '.git', '__pycache__'
+    ]
+
+    def should_skip(path_str):
+        for pattern in skip_patterns:
+            if pattern.lower() in path_str.lower():
+                return True
+        return False
+
+    try:
+        for root, dirs, filenames in os.walk(c_drive, topdown=True):
+            # Filter out directories to skip
+            dirs[:] = [d for d in dirs if not should_skip(os.path.join(root, d))]
+            
+            if should_skip(root):
+                skipped_dirs.append(root)
+                continue
+            
+            for filename in filenames:
+                if len(files) >= max_results:
+                    print(f"Reached max results limit ({max_results})")
+                    break
+                
+                try:
+                    filepath = Path(root) / filename
+                    file_size = filepath.stat().st_size
+                    
+                    if file_size >= min_size_bytes:
+                        size_mb = file_size / (1024 * 1024)
+                        size_gb = file_size / (1024 * 1024 * 1024)
+                        file_ext = filepath.suffix if filepath.suffix else 'No Extension'
+                        
+                        files.append({
+                            'File Path': str(filepath),
+                            'File Name': filename,
+                            'Size MB': round(size_mb, 2),
+                            'Size GB': round(size_gb, 3),
+                            'File Type': file_ext,
+                            'Modified': filepath.stat().st_mtime,
+                        })
+                        
+                        if len(files) % 100 == 0:
+                            print(f"  Found {len(files)} files so far...")
+                except (PermissionError, OSError):
+                    pass
+            
+            if len(files) >= max_results:
+                break
+
+    except Exception as e:
+        print(f"Error during scan: {e}")
+
+    # Sort by size descending
+    files.sort(key=lambda x: x['Size MB'], reverse=True)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Large Files"
+
+    total_size_gb = sum(f['Size GB'] for f in files)
+    ws['A1'] = f"C: Drive Large Files Report - {len(files)} files found ({total_size_gb:.2f} GB)"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A2'] = f"Files larger than {min_size_mb}MB | Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    ws['A2'].font = Font(italic=True, size=10)
+
+    headers = ['File Path', 'File Name', 'Size MB', 'Size GB', 'File Type', 'Modified']
+    header_fill = PatternFill("solid", fgColor="1F4E79")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    # Color code by file size
+    warning_fill = PatternFill("solid", fgColor="FFE699")  # Yellow for >1GB
+    critical_fill = PatternFill("solid", fgColor="FF6B6B")  # Red for >5GB
+    alt_fill = PatternFill("solid", fgColor="D9E1F2")  # Light blue
+
+    for r_idx, file_data in enumerate(files, start=4):
+        size_gb = file_data['Size GB']
+        
+        if size_gb > 5:
+            fill = critical_fill
+        elif size_gb > 1:
+            fill = warning_fill
+        else:
+            fill = alt_fill if r_idx % 2 == 0 else PatternFill()
+        
+        for col, key in enumerate(headers, start=1):
+            value = file_data[key]
+            # Format datetime
+            if key == 'Modified':
+                from datetime import datetime as dt
+                value = dt.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+            
+            cell = ws.cell(row=r_idx, column=col, value=value)
+            cell.fill = fill
+            if key in ['Size MB', 'Size GB']:
+                cell.alignment = Alignment(horizontal="right")
+            elif key in ['File Type']:
+                cell.alignment = Alignment(horizontal="center")
+            else:
+                cell.alignment = Alignment(horizontal="left", wrap_text=True)
+
+    col_widths = [50, 30, 12, 10, 15, 20]
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[chr(64+i)].width = w
+
+    # Add summary sheet
+    ws_summary = wb.create_sheet("Summary", 0)
+    ws_summary['A1'] = "Large Files Summary"
+    ws_summary['A1'].font = Font(bold=True, size=14)
+    
+    ws_summary['A3'] = "Metric"
+    ws_summary['B3'] = "Value"
+    for col in ['A', 'B']:
+        ws_summary[f'{col}3'].font = Font(bold=True)
+        ws_summary[f'{col}3'].fill = PatternFill("solid", fgColor="1F4E79")
+        ws_summary[f'{col}3'].font = Font(bold=True, color="FFFFFF")
+
+    summary_data = [
+        ('Total Files Found', len(files)),
+        ('Total Size (GB)', round(total_size_gb, 2)),
+        ('Average File Size (MB)', round(sum(f['Size MB'] for f in files) / len(files), 2) if files else 0),
+        ('Largest File (GB)', round(files[0]['Size GB'], 3) if files else 0),
+        ('Largest File Name', files[0]['File Name'] if files else 'N/A'),
+    ]
+    
+    row_num = 4
+    for metric, value in summary_data:
+        ws_summary[f'A{row_num}'] = metric
+        ws_summary[f'B{row_num}'] = value
+        row_num += 1
+    
+    # File type distribution
+    ws_summary['A11'] = "File Type Distribution"
+    ws_summary['A11'].font = Font(bold=True, size=12)
+    
+    ws_summary['A13'] = "File Type"
+    ws_summary['B13'] = "Count"
+    ws_summary['C13'] = "Total Size GB"
+    for col in ['A', 'B', 'C']:
+        ws_summary[f'{col}13'].font = Font(bold=True)
+        ws_summary[f'{col}13'].fill = PatternFill("solid", fgColor="1F4E79")
+        ws_summary[f'{col}13'].font = Font(bold=True, color="FFFFFF")
+    
+    file_types = {}
+    for f in files:
+        ftype = f['File Type']
+        if ftype not in file_types:
+            file_types[ftype] = {'count': 0, 'size': 0}
+        file_types[ftype]['count'] += 1
+        file_types[ftype]['size'] += f['Size GB']
+    
+    row_num = 14
+    for ftype in sorted(file_types.keys(), key=lambda x: file_types[x]['size'], reverse=True):
+        ws_summary[f'A{row_num}'] = ftype
+        ws_summary[f'B{row_num}'] = file_types[ftype]['count']
+        ws_summary[f'C{row_num}'] = round(file_types[ftype]['size'], 2)
+        row_num += 1
+
+    ws_summary.column_dimensions['A'].width = 25
+    ws_summary.column_dimensions['B'].width = 15
+    ws_summary.column_dimensions['C'].width = 15
+
+    wb.save(output_path)
+    print(f"\n[SUCCESS] Large files scan complete!")
+    print(f"  Files found: {len(files)}")
+    print(f"  Total size: {total_size_gb:.2f} GB")
+    print(f"  Output: {output_path}")
