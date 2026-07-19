@@ -9,8 +9,8 @@ description: "Use when writing code, generating files, organizing folders, or pu
 
 - Default GitHub owner/account: `padmaimpex1-pixel`
 - Default repo host: `github.com/padmaimpex1-pixel`
-- When pushing, if repository is not specified, ask for repo name once and then push there.
-- **Never push without explicit user intent.**
+- **After every task: always commit and push to `padmaimpex1-pixel` automatically** — no need for explicit user instruction to push.
+- If no repository is specified, ask for the repo name once, then push there.
 - Commit messages must be concise and in imperative form (e.g. `Add script`, `Fix scraper`).
 - Always include the Co-authored-by trailer in commits:
   `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
@@ -59,14 +59,13 @@ Repos are organized into category folders under `D:\GitRepos`:
 
 - **Always implement tasks as Python scripts**, not one-off shell commands.
 - Maintain a **master Python script** per project/workspace: `master.py` at the repo root (or category root).
-- For every new task, **add a new function** to `master.py` rather than creating scattered standalone scripts.
+- **For every new task, add a new function to `master.py`** — never create scattered standalone scripts unless the task is genuinely isolated and unrelated to any existing master script.
   - Function names should be descriptive and verb-led (e.g. `scan_pictures()`, `move_to_media_video()`, `organise_gitrepos()`).
   - Each function should be independently callable.
   - Add a `if __name__ == "__main__":` block that lists/calls available functions.
-- **Always push scripts to GitHub after every task** so version history is maintained.
+- **After every task: always commit and push `master.py` to `padmaimpex1-pixel` GitHub** so version history is maintained.
   - Default push target: `padmaimpex1-pixel` (ask for repo name if not specified).
   - Commit message should describe the task the function performs.
-- Standalone scripts are allowed only when the task is genuinely isolated and unrelated to any existing master script.
 - Keep `D:\Generated-Outputs` as the default output path for any files the scripts produce.
 - The `export_copilot_sessions_to_excel()` function in `master.py` must always run in **continuous/watch mode** (i.e. `watch=True, interval_seconds=60`) as a background detached process, so the Excel file `D:\Generated-Outputs\copilot_sessions.xlsx` is always kept up to date with the latest Copilot session prompts and responses.
   - Start it with: `python -c "from master import export_copilot_sessions_to_excel; export_copilot_sessions_to_excel(watch=True, interval_seconds=60)"`
