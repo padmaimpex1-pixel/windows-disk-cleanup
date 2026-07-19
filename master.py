@@ -2253,18 +2253,61 @@ Write-Host "DONE removed=$removed failed=$failed"
         print(f"  {line}")
 
     # -------------------------------------------------------------------------
-    # Step 6: Clear recent FILES from Quick Access (not folders)
+    # Step 6: Clear ALL recent file entries from Quick Access
     # -------------------------------------------------------------------------
+    # Remove recent .lnk files
     recent_dir = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Recent"
-    cleared = 0
+    cleared_lnk = 0
     if recent_dir.exists():
         for lnk in recent_dir.glob("*.lnk"):
             try:
                 lnk.unlink()
-                cleared += 1
+                cleared_lnk += 1
             except Exception:
                 pass
-        print(f"\n  Cleared {cleared} recent file shortcut(s) from Quick Access.")
 
-    print(f"\n[DONE] Quick Access cleaned. Kept top {keep_top} folder(s), removed {len(remove_items)}, cleared {cleared} recent file(s).")
+    # Nuke AutomaticDestinations and CustomDestinations jumplists
+    # (these are the real source of recent file entries in Quick Access)
+    cleared_jl = 0
+    for subdir in ["AutomaticDestinations", "CustomDestinations"]:
+        jl_dir = recent_dir / subdir
+        if jl_dir.exists():
+            for f in jl_dir.iterdir():
+                try:
+                    f.unlink()
+                    cleared_jl += 1
+                except Exception:
+                    pass
+
+    print(f"\n  Cleared {cleared_lnk} recent .lnk file(s) and {cleared_jl} jumplist file(s).")
+
+    # -------------------------------------------------------------------------
+    # Step 7: Re-pin the keeper folders (clearing jumplists unpins them)
+    # -------------------------------------------------------------------------
+    keep_paths_ps = " ,".join(f'"{i["path"]}"' for i in keep_items)
+    ps_repin = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+$shell = New-Object -ComObject Shell.Application
+$paths = @({keep_paths_ps})
+$pinned = 0
+foreach ($p in $paths) {{
+    $folder = $shell.Namespace($p)
+    if ($folder) {{
+        $item = $folder.Self
+        $verb = $item.Verbs() | Where-Object {{ $_.Name -eq 'Pin to &Quick access' }} | Select-Object -First 1
+        if ($verb) {{ $verb.DoIt(); $pinned++; Write-Host "PINNED: $p" }}
+        else {{ Write-Host "ALREADY PINNED: $p" }}
+        Start-Sleep -Milliseconds 300
+    }}
+}}
+Write-Host "Re-pinned $pinned folder(s)"
+"""
+    res3 = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_repin],
+        capture_output=True, text=True
+    )
+    for line in res3.stdout.strip().splitlines():
+        print(f"  {line}")
+
+    print(f"\n[DONE] Quick Access cleaned. Kept top {keep_top} folder(s), removed {len(remove_items)}, cleared {cleared_lnk} lnk + {cleared_jl} jumplist file(s).")
     print(f"{'='*70}\n")
