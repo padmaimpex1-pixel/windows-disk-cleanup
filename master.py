@@ -2311,3 +2311,276 @@ Write-Host "Re-pinned $pinned folder(s)"
 
     print(f"\n[DONE] Quick Access cleaned. Kept top {keep_top} folder(s), removed {len(remove_items)}, cleared {cleared_lnk} lnk + {cleared_jl} jumplist file(s).")
     print(f"{'='*70}\n")
+
+
+# =============================================================================
+# COMPARE LOCAL REPO WITH REMOTE
+# =============================================================================
+
+def compare_local_with_remote(
+    remote_url="https://github.com/padmaimpex1-pixel/commonLaptop",
+    local_path=None,
+    branch="main",
+    output_report=True,
+):
+    """
+    Compares a local Git repository folder with a remote GitHub repo and
+    produces a detailed diff report showing:
+      - Files only in local  (not pushed / new)
+      - Files only in remote (deleted locally / not pulled)
+      - Files in both but with different content (modified)
+      - Files identical in both
+
+    Args:
+        remote_url   : GitHub HTTPS URL of the remote repo.
+        local_path   : Path to local repo root. If None, searches D:\\GitRepos
+                       for a repo whose origin matches remote_url.
+                       If still not found, offers to clone it.
+        branch       : Branch to compare against (default "main").
+        output_report: If True, saves a text report to D:\\Generated-Outputs.
+
+    Returns:
+        dict with keys: only_local, only_remote, modified, identical, report_path
+    """
+    import subprocess
+    import hashlib
+    import tempfile
+
+    REMOTE_URL = remote_url.rstrip("/")
+    repo_name  = REMOTE_URL.rstrip("/").split("/")[-1]
+
+    print(f"\n{'='*70}")
+    print(f"COMPARE LOCAL vs REMOTE: {repo_name}")
+    print(f"  Remote : {REMOTE_URL}")
+    print(f"  Branch : {branch}")
+    print(f"{'='*70}")
+
+    # -------------------------------------------------------------------------
+    # Step 1: Find local repo
+    # -------------------------------------------------------------------------
+    def _find_local_repo(search_root: Path, url: str) -> Path | None:
+        """Walk D:\\GitRepos looking for a git repo whose origin matches url."""
+        for git_dir in search_root.rglob(".git"):
+            if not git_dir.is_dir():
+                continue
+            candidate = git_dir.parent
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(candidate), "remote", "get-url", "origin"],
+                    capture_output=True, text=True, timeout=5
+                )
+                remote = result.stdout.strip().rstrip("/")
+                if remote.lower() == url.lower():
+                    return candidate
+            except Exception:
+                continue
+        return None
+
+    local_repo = None
+    if local_path:
+        local_repo = Path(local_path)
+        if not (local_repo / ".git").exists():
+            print(f"[ERROR] {local_path} is not a git repository.")
+            return {}
+    else:
+        print("  Searching D:\\GitRepos for a local clone...")
+        local_repo = _find_local_repo(Path(r"D:\GitRepos"), REMOTE_URL)
+
+    if local_repo is None:
+        print(f"  No local clone found. Cloning {REMOTE_URL} ...")
+        clone_dest = Path(r"D:\GitRepos") / repo_name
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", branch, REMOTE_URL, str(clone_dest)],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            # Try without --branch in case default branch differs
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", REMOTE_URL, str(clone_dest)],
+                capture_output=True, text=True
+            )
+        if result.returncode == 0:
+            local_repo = clone_dest
+            print(f"  Cloned to: {local_repo}")
+        else:
+            print(f"[ERROR] Clone failed:\n{result.stderr}")
+            return {}
+
+    print(f"  Local  : {local_repo}")
+
+    # -------------------------------------------------------------------------
+    # Step 2: Fetch latest remote state into a temp worktree
+    # -------------------------------------------------------------------------
+    print("  Fetching remote...")
+    fetch = subprocess.run(
+        ["git", "-C", str(local_repo), "fetch", "origin"],
+        capture_output=True, text=True
+    )
+    if fetch.returncode != 0:
+        print(f"[WARN] Fetch failed: {fetch.stderr.strip()}")
+
+    # Determine the remote tracking branch
+    remote_ref = f"origin/{branch}"
+    check_ref = subprocess.run(
+        ["git", "-C", str(local_repo), "rev-parse", "--verify", remote_ref],
+        capture_output=True, text=True
+    )
+    if check_ref.returncode != 0:
+        # Try to find any remote branch
+        branches = subprocess.run(
+            ["git", "-C", str(local_repo), "branch", "-r"],
+            capture_output=True, text=True
+        ).stdout.strip().splitlines()
+        if branches:
+            remote_ref = branches[0].strip()
+            print(f"  Using remote branch: {remote_ref}")
+        else:
+            print("[ERROR] No remote branches found.")
+            return {}
+
+    # -------------------------------------------------------------------------
+    # Step 3: Get file trees for LOCAL HEAD and REMOTE via git ls-tree
+    # -------------------------------------------------------------------------
+    def _get_file_tree(repo: Path, ref: str) -> dict:
+        """Returns {relative_path: sha1_blob} for all files at given ref."""
+        result = subprocess.run(
+            ["git", "-C", str(repo), "ls-tree", "-r", "--full-tree", ref],
+            capture_output=True, text=True
+        )
+        tree = {}
+        for line in result.stdout.splitlines():
+            # format: <mode> <type> <sha>\t<path>
+            parts = line.split("\t", 1)
+            if len(parts) == 2:
+                meta, path = parts
+                sha = meta.split()[2]
+                tree[path] = sha
+        return tree
+
+    local_ref  = "HEAD"
+    local_tree  = _get_file_tree(local_repo, local_ref)
+    remote_tree = _get_file_tree(local_repo, remote_ref)
+
+    if not local_tree and not remote_tree:
+        print("[ERROR] Could not read file trees from repo.")
+        return {}
+
+    print(f"  Local  HEAD : {len(local_tree)} file(s)")
+    print(f"  Remote {remote_ref}: {len(remote_tree)} file(s)")
+
+    # -------------------------------------------------------------------------
+    # Step 4: Classify files
+    # -------------------------------------------------------------------------
+    all_paths    = set(local_tree) | set(remote_tree)
+    only_local   = []   # in local, not in remote
+    only_remote  = []   # in remote, not in local
+    modified     = []   # in both, different blob SHA
+    identical    = []   # in both, same blob SHA
+
+    for path in sorted(all_paths):
+        in_local  = path in local_tree
+        in_remote = path in remote_tree
+        if in_local and not in_remote:
+            only_local.append(path)
+        elif in_remote and not in_local:
+            only_remote.append(path)
+        elif local_tree[path] == remote_tree[path]:
+            identical.append(path)
+        else:
+            modified.append(path)
+
+    # -------------------------------------------------------------------------
+    # Step 5: Get actual diff stats for modified files
+    # -------------------------------------------------------------------------
+    diff_stats = {}
+    if modified:
+        diff_result = subprocess.run(
+            ["git", "-C", str(local_repo), "diff", "--stat", remote_ref, local_ref, "--"],
+            capture_output=True, text=True
+        )
+        diff_stats["summary"] = diff_result.stdout.strip()
+
+    # -------------------------------------------------------------------------
+    # Step 6: Print report
+    # -------------------------------------------------------------------------
+    print(f"\n{'='*70}")
+    print(f"  SUMMARY")
+    print(f"{'='*70}")
+    print(f"  Identical  : {len(identical):>4} file(s)")
+    print(f"  Modified   : {len(modified):>4} file(s)  (local differs from remote)")
+    print(f"  Only LOCAL : {len(only_local):>4} file(s)  (not pushed to remote)")
+    print(f"  Only REMOTE: {len(only_remote):>4} file(s)  (not pulled to local)")
+
+    if only_local:
+        print(f"\n  --- ONLY IN LOCAL (not pushed) ---")
+        for f in only_local:
+            print(f"    + {f}")
+
+    if only_remote:
+        print(f"\n  --- ONLY IN REMOTE (not in local) ---")
+        for f in only_remote:
+            print(f"    - {f}")
+
+    if modified:
+        print(f"\n  --- MODIFIED (content differs) ---")
+        for f in modified:
+            print(f"    ~ {f}")
+        if diff_stats.get("summary"):
+            print(f"\n  Diff stats:")
+            for line in diff_stats["summary"].splitlines():
+                print(f"    {line}")
+
+    # -------------------------------------------------------------------------
+    # Step 7: Save report to D:\Generated-Outputs
+    # -------------------------------------------------------------------------
+    report_path = None
+    if output_report:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = OUTPUT_DIR / f"repo_compare_{repo_name}_{ts}.txt"
+        lines = [
+            f"REPO COMPARE REPORT",
+            f"Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Remote    : {REMOTE_URL}",
+            f"Local     : {local_repo}",
+            f"Branch    : {branch}",
+            f"",
+            f"SUMMARY",
+            f"  Identical   : {len(identical)}",
+            f"  Modified    : {len(modified)}",
+            f"  Only local  : {len(only_local)}",
+            f"  Only remote : {len(only_remote)}",
+            f"",
+        ]
+        if only_local:
+            lines += ["ONLY IN LOCAL (not pushed):"]
+            lines += [f"  + {f}" for f in only_local]
+            lines.append("")
+        if only_remote:
+            lines += ["ONLY IN REMOTE (not in local):"]
+            lines += [f"  - {f}" for f in only_remote]
+            lines.append("")
+        if modified:
+            lines += ["MODIFIED (content differs):"]
+            lines += [f"  ~ {f}" for f in modified]
+            if diff_stats.get("summary"):
+                lines += ["", "DIFF STATS:"]
+                lines += [f"  {l}" for l in diff_stats["summary"].splitlines()]
+            lines.append("")
+        if identical:
+            lines += ["IDENTICAL FILES:"]
+            lines += [f"  = {f}" for f in identical]
+
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\n  Report saved: {report_path}")
+
+    print(f"\n[DONE] Compare complete.")
+    print(f"{'='*70}\n")
+
+    return {
+        "only_local":  only_local,
+        "only_remote": only_remote,
+        "modified":    modified,
+        "identical":   identical,
+        "report_path": report_path,
+    }
