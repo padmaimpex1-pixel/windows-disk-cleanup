@@ -2216,45 +2216,37 @@ $result | ConvertTo-Json -Depth 2 -Compress
     print(f"\n{'-'*50}")
     print("  Removing items...")
 
-    # Build a PowerShell script that invokes the correct remove verb per item
-    remove_entries = json.dumps(
-        [{"path": i["path"], "verb": i["remove_verb"]} for i in remove_items],
-        ensure_ascii=False
-    )
-    ps_remove = r"""
-param($json)
+    # Build inline PowerShell that embeds paths directly (avoids param-passing issues)
+    keep_paths_ps = " ,".join(f'"{i["path"]}"' for i in keep_items)
+    ps_remove = f"""
 $ErrorActionPreference = 'SilentlyContinue'
-$entries = $json | ConvertFrom-Json
-$shell   = New-Object -ComObject Shell.Application
-$qa      = $shell.Namespace("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}")
-$removed = 0
-$failed  = 0
-foreach ($entry in $entries) {
-    $matched = $false
-    foreach ($item in $qa.Items()) {
-        if ($item.Path -eq $entry.path) {
-            $verb = $item.Verbs() | Where-Object { $_.Name -eq $entry.verb } | Select-Object -First 1
-            if ($verb) {
-                $verb.DoIt()
-                Write-Host "REMOVED: $($item.Name)"
-                $removed++
-            } else {
-                Write-Host "NO_VERB: $($item.Name) (verb='$($entry.verb)' not found)"
-                $failed++
-            }
-            $matched = $true
-            break
-        }
-    }
-    if (-not $matched) {
-        Write-Host "NOT_FOUND: $($entry.path)"
+$keepPaths = @({keep_paths_ps})
+$shell  = New-Object -ComObject Shell.Application
+$qa     = $shell.Namespace("shell:::{{{'{679f85cb-0220-4080-b29b-5540cc05aab6}'}}}") 
+$removed = 0; $failed = 0
+foreach ($item in @($qa.Items())) {{
+    $isDir = Test-Path -LiteralPath $item.Path -PathType Container
+    if (-not $isDir) {{ continue }}
+    $norm = $item.Path.TrimEnd('\\')
+    if ($keepPaths -contains $norm) {{ continue }}
+    $verb = $item.Verbs() | Where-Object {{ $_.Name -eq 'Unpin from &Quick access' }} | Select-Object -First 1
+    if (-not $verb) {{
+        $verb = $item.Verbs() | Where-Object {{ $_.Name -eq 'Remo&ve from Quick access' }} | Select-Object -First 1
+    }}
+    if ($verb) {{
+        $verb.DoIt()
+        Start-Sleep -Milliseconds 200
+        Write-Host "REMOVED: $($item.Name)"
+        $removed++
+    }} else {{
+        Write-Host "NO_VERB: $($item.Name)"
         $failed++
-    }
-}
+    }}
+}}
 Write-Host "DONE removed=$removed failed=$failed"
 """
     res2 = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", ps_remove, "-json", remove_entries],
+        ["powershell", "-NoProfile", "-Command", ps_remove],
         capture_output=True, text=True
     )
     for line in res2.stdout.strip().splitlines():
