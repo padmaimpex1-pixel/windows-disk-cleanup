@@ -10,16 +10,84 @@ import sqlite3
 import tempfile
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from dateutil import parser as date_parser
 
 OUTPUT_DIR = Path(r"D:\Generated-Outputs")
 COPILOT_DB = Path(r"C:\Users\dell\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\session-store.db")
 
+# =========================================================================
+# CURRENT SESSION DATETIME - Set at script startup
+# =========================================================================
+# Current datetime: 2026-07-18T07:27:37.086+05:30 (IST)
+SESSION_DATETIME_STR = "2026-07-18T07:27:37.086+05:30"
+try:
+    SESSION_DATETIME = date_parser.isoparse(SESSION_DATETIME_STR)
+except:
+    # Fallback to current system time if parsing fails
+    SESSION_DATETIME = datetime.now(timezone.utc)
 
-# ---------------------------------------------------------------------------
+SESSION_TIMESTAMP = SESSION_DATETIME.strftime("%Y%m%d_%H%M%S")
+SESSION_DATE = SESSION_DATETIME.strftime("%Y-%m-%d")
+SESSION_TIME = SESSION_DATETIME.strftime("%H:%M:%S")
+SESSION_TIMEZONE = SESSION_DATETIME.strftime("%z")
+
+print(f"\n{'='*80}")
+print(f"MASTER SCRIPT - Session Started")
+print(f"  Date:      {SESSION_DATE}")
+print(f"  Time:      {SESSION_TIME} {SESSION_TIMEZONE}")
+print(f"  Timestamp: {SESSION_TIMESTAMP}")
+print(f"  Timezone:  IST (UTC+05:30)")
+print(f"{'='*80}\n")
+
+
+# =========================================================================
+# DATETIME UTILITY FUNCTIONS
+# =========================================================================
+
+def get_session_datetime():
+    """Returns the current session datetime."""
+    return SESSION_DATETIME
+
+def get_session_timestamp():
+    """Returns the session timestamp in format YYYYMMDD_HHMMSS."""
+    return SESSION_TIMESTAMP
+
+def get_session_info():
+    """Returns a dictionary with session datetime information."""
+    return {
+        "datetime": SESSION_DATETIME_STR,
+        "date": SESSION_DATE,
+        "time": SESSION_TIME,
+        "timezone": "IST (UTC+05:30)",
+        "timestamp": SESSION_TIMESTAMP,
+    }
+
+def log_with_timestamp(message: str, prefix: str = "INFO"):
+    """Log a message with the current session timestamp."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] [{prefix}] {message}")
+
+def get_file_timestamp_suffix():
+    """Returns a filename-safe timestamp suffix based on session."""
+    return SESSION_TIMESTAMP
+
+# Print session info on startup
+def print_session_header(title: str = ""):
+    """Print a formatted session header with datetime info."""
+    header = f"\n{'='*80}"
+    if title:
+        header += f"\n{title}\n"
+    header += f"Session: {SESSION_DATE} at {SESSION_TIME} IST\n"
+    header += f"{'='*80}\n"
+    print(header)
+
+
+
+# =========================================================================
 # TASK: Export all Copilot session prompts + responses to Excel
-# ---------------------------------------------------------------------------
+# =========================================================================
 
 def export_copilot_sessions_to_excel(output_path: Path = None, watch: bool = False, interval_seconds: int = 60):
     """
@@ -512,6 +580,132 @@ def sync_gitrepos_to_padmaimpex(root: str = r"D:\GitRepos", target_owner: str = 
 
 
 # ---------------------------------------------------------------------------
+# TASK: Build Home-sheet hyperlinks for all workbook tabs
+# ---------------------------------------------------------------------------
+
+def build_home_sheet_hyperlinks(
+    workbook_path: Path = Path(r"D:\documents\master_working.xlsm"),
+    home_sheet_name: str = "Home",
+    output_path: Path = None,
+    columns: int = 0,
+    start_row: int = 2,
+    start_col: int = 1,
+    clear_right_preview: bool = True,
+    include_home_variants: bool = False,
+    include_hidden_sheets: bool = False,
+    create_backup: bool = True,
+    target_visible_rows: int = 45,
+    max_visible_cols: int = 18,
+    zoom_scale: int = 55,
+):
+    """
+    Writes clickable tab hyperlinks on the Home sheet for all workbook sheets.
+
+    The links are written as a spread grid starting from row 2, sized to fit
+    within a single-page view as much as possible.
+    Optionally clears the right-preview panel area (default: columns D:H).
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        print("openpyxl not installed. Run: pip install openpyxl")
+        return
+
+    workbook_path = Path(workbook_path)
+    if output_path is None:
+        output_path = workbook_path
+    else:
+        output_path = Path(output_path)
+
+    if not workbook_path.exists():
+        print(f"ERROR: workbook not found: {workbook_path}")
+        return
+
+    wb = openpyxl.load_workbook(workbook_path, keep_vba=True)
+    if home_sheet_name not in wb.sheetnames:
+        print(f"ERROR: home sheet not found: {home_sheet_name}")
+        return
+
+    ws = wb[home_sheet_name]
+
+    # Build sheet list in workbook order.
+    sheet_names = []
+    for s in wb.worksheets:
+        name = s.title
+        if name == home_sheet_name:
+            continue
+        if not include_home_variants and name.lower().startswith("home"):
+            continue
+        if not include_hidden_sheets and s.sheet_state != "visible":
+            continue
+        sheet_names.append(name)
+
+    if not sheet_names:
+        print("No target sheets found to link.")
+        return
+
+    # Auto-calculate spread columns so links fit in a single page view.
+    if columns <= 0:
+        columns = max(1, (len(sheet_names) + target_visible_rows - 1) // target_visible_rows)
+        columns = min(columns, max_visible_cols)
+
+    # Clear existing home link grid area.
+    rows_needed = (len(sheet_names) + columns - 1) // columns
+    end_row = max(ws.max_row, start_row + max(rows_needed, target_visible_rows) + 5)
+    end_col = start_col + max(columns, max_visible_cols) - 1
+    for r in range(start_row, end_row + 1):
+        for c in range(start_col, end_col + 1):
+            cell = ws.cell(r, c)
+            cell.value = None
+            cell.hyperlink = None
+
+    # Write formulas as hyperlinks to each sheet tab.
+    for idx, sheet_name in enumerate(sheet_names):
+        r = start_row + (idx // columns)
+        c = start_col + (idx % columns)
+        sheet_escaped = sheet_name.replace("'", "''")
+        text_escaped = sheet_name.replace('"', '""')
+        ws.cell(r, c).value = f'=HYPERLINK("#\'{sheet_escaped}\'!A1","{text_escaped}")'
+
+    # Format the visible link area to improve one-page readability.
+    for c in range(start_col, start_col + columns):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 12
+    for r in range(start_row, start_row + rows_needed + 1):
+        ws.row_dimensions[r].height = 18
+
+    # Make sheet view and print setup fit in a single page as much as possible.
+    ws.sheet_view.zoomScale = zoom_scale
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    # Remove right-side preview content if requested.
+    if clear_right_preview:
+        preview_start_col = 4  # D
+        preview_end_col = 8    # H
+        preview_end_row = max(ws.max_row, start_row + rows_needed + 20)
+        for r in range(1, preview_end_row + 1):
+            for c in range(preview_start_col, preview_end_col + 1):
+                ws.cell(r, c).value = None
+                ws.cell(r, c).hyperlink = None
+
+    if create_backup and output_path == workbook_path:
+        backup_path = workbook_path.with_name(
+            f"{workbook_path.stem}.backup-{datetime.now().strftime('%Y%m%d_%H%M%S')}{workbook_path.suffix}"
+        )
+        shutil.copy2(workbook_path, backup_path)
+        print(f"Backup created: {backup_path}")
+
+    wb.save(output_path)
+    print(f"Updated Home hyperlinks for {len(sheet_names)} tabs -> {output_path}")
+    print(
+        f"Grid: start row {start_row}, columns {columns}, rows {rows_needed}, "
+        f"zoom {zoom_scale}%, right preview cleared: {clear_right_preview}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # MENU
 # ---------------------------------------------------------------------------
 
@@ -520,6 +714,7 @@ TASKS = {
     "2": ("Export Copilot sessions to Excel (watch/continuous)", lambda: export_copilot_sessions_to_excel(watch=True, interval_seconds=60)),
     "3": ("Sync vipingit1 repos to padmaimpex1-pixel (dry run)", lambda: sync_gitrepos_to_padmaimpex(dry_run=True)),
     "4": ("Sync vipingit1 repos to padmaimpex1-pixel (LIVE)", lambda: sync_gitrepos_to_padmaimpex(dry_run=False)),
+    "5": ("Build Home-sheet hyperlinks for all tabs (clear right preview)", lambda: build_home_sheet_hyperlinks()),
 }
 
 if __name__ == "__main__":
@@ -1561,3 +1756,523 @@ def move_exe_files_to_d_drive(dry_run: bool = True, exclude_system: bool = True,
 
         wb.save(report_path)
         print(f"\nMove report saved: {report_path}")
+
+
+# ---------------------------------------------------------------------------
+# TASK: Export OneDrive .txt file contents to Excel
+# ---------------------------------------------------------------------------
+
+def export_onedrive_txt_contents_to_excel(onedrive_path: Path = None, output_path: Path = None):
+    """
+    Scans OneDrive for .txt files, exports full text to Excel, and groups similar text
+    into separate tabs.
+
+    Notes:
+        - Excel cells are limited to 32,767 characters.
+        - Text longer than that is split across multiple rows using Content Part.
+    """
+    try:
+        import re
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError:
+        print("openpyxl required. Run: pip install openpyxl")
+        return
+
+    if onedrive_path is None:
+        env_onedrive = os.environ.get("OneDrive")
+        if env_onedrive:
+            onedrive_path = Path(env_onedrive)
+        else:
+            onedrive_path = Path.home() / "OneDrive"
+
+    onedrive_path = Path(onedrive_path)
+    if not onedrive_path.exists():
+        print(f"ERROR: OneDrive path not found: {onedrive_path}")
+        return
+
+    if output_path is None:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR / "onedrive_notepad_text_export.xlsx"
+    output_path = Path(output_path)
+
+    print("=" * 80)
+    print("ONEDRIVE NOTEPAD TEXT EXPORT")
+    print("=" * 80)
+    print(f"Source OneDrive: {onedrive_path}")
+    print(f"Output Excel:    {output_path}")
+    print("File filter:     *.txt")
+    print()
+
+    txt_files = [p for p in onedrive_path.rglob("*.txt") if p.is_file()]
+    total_files = len(txt_files)
+    print(f"Found {total_files} .txt files")
+
+    if total_files == 0:
+        print("No .txt files found. Nothing to export.")
+        return
+
+    max_cell_chars = 32000
+    processed = 0
+    failed = 0
+    last_status_time = time.time()
+    process_start = last_status_time
+    encodings_to_try = ("utf-8", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin-1")
+
+    file_records = []
+
+    for txt_file in txt_files:
+        processed += 1
+        now = time.time()
+        if now - last_status_time >= 120:
+            elapsed = now - process_start
+            rate = processed / elapsed if elapsed > 0 else 0
+            remaining = total_files - processed
+            eta_seconds = int(remaining / rate) if rate > 0 else -1
+            if eta_seconds >= 0:
+                eta_text = f"{eta_seconds // 60}m {eta_seconds % 60}s"
+            else:
+                eta_text = "unknown"
+            print(
+                f"[STATUS] {processed}/{total_files} files processed | "
+                f"Current: {txt_file} | ETA: {eta_text}"
+            )
+            last_status_time = now
+
+        stat = txt_file.stat()
+        modified_time = datetime.fromtimestamp(stat.st_mtime).isoformat(sep=" ")
+        size_kb = round(stat.st_size / 1024, 2)
+
+        text_content = None
+        for encoding in encodings_to_try:
+            try:
+                text_content = txt_file.read_text(encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+            except OSError:
+                text_content = None
+                break
+
+        if text_content is None:
+            failed += 1
+            file_records.append(
+                {
+                    "path": str(txt_file),
+                    "modified_time": modified_time,
+                    "size_kb": size_kb,
+                    "content": "[ERROR] Could not read file content with supported encodings.",
+                    "read_error": True,
+                }
+            )
+            continue
+
+        file_records.append(
+            {
+                "path": str(txt_file),
+                "modified_time": modified_time,
+                "size_kb": size_kb,
+                "content": text_content,
+                "read_error": False,
+            }
+        )
+
+    workbook = openpyxl.Workbook()
+    headers = ["File Path", "Modified Time", "Size (KB)", "Content Part", "Text Content"]
+    header_fill = PatternFill("solid", fgColor="1F4E79")
+    header_font = Font(bold=True, color="FFFFFF")
+    standard_column_width = 25
+    standard_row_height = 15
+
+    def setup_sheet(worksheet):
+        for col, header in enumerate(headers, start=1):
+            cell = worksheet.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for col_letter in ["A", "B", "C", "D", "E"]:
+            worksheet.column_dimensions[col_letter].width = standard_column_width
+        worksheet.sheet_format.defaultRowHeight = standard_row_height
+        worksheet.row_dimensions[1].height = standard_row_height
+        worksheet.freeze_panes = "A2"
+        worksheet.sheet_view.zoomScale = 90
+
+    def write_records(worksheet, records):
+        row = 2
+        for record in records:
+            text_content = record["content"] if record["content"] is not None else ""
+            parts = [text_content[i:i + max_cell_chars] for i in range(0, len(text_content), max_cell_chars)]
+            if not parts:
+                parts = [""]
+            for part_index, part_text in enumerate(parts, start=1):
+                worksheet.cell(row=row, column=1, value=record["path"])
+                worksheet.cell(row=row, column=2, value=record["modified_time"])
+                worksheet.cell(row=row, column=3, value=record["size_kb"])
+                worksheet.cell(row=row, column=4, value=part_index)
+                compact_text = part_text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+                content_cell = worksheet.cell(row=row, column=5, value=compact_text)
+                content_cell.alignment = Alignment(wrap_text=False, shrink_to_fit=True, vertical="center")
+                worksheet.row_dimensions[row].height = standard_row_height
+                row += 1
+
+    category_keywords = {
+        "Tasks_Todo": [
+            "todo", "to do", "task", "checklist", "pending", "deadline", "follow up",
+            "complete", "action item", "reminder",
+        ],
+        "Office_Documents": [
+            "document", "doc", "draft", "letter", "memo", "reference", "summary",
+            "template", "official", "print",
+        ],
+        "Technical_Code": [
+            "python", "javascript", "typescript", "java", "c++", "api", "json", "sql",
+            "github", "git", "script", "function", "code", "bug", "error", "stack trace",
+            "server", "deploy", "build", "debug", "traceback", "terminal", "cmd", "powershell",
+            "docker", "kubernetes", "pipeline", "ci", "cd",
+        ],
+        "IT_Infra_Network": [
+            "ip", "dns", "router", "switch", "firewall", "network", "lan", "wan", "wifi",
+            "port", "tcp", "udp", "vpn", "ssl", "tls", "hostname", "subnet",
+        ],
+        "Passwords_Accounts": [
+            "password", "passcode", "username", "login", "signin", "otp", "pin", "credential",
+            "account", "2fa", "authenticator", "security answer",
+        ],
+        "Finance": [
+            "invoice", "payment", "bank", "account", "upi", "amount", "balance", "salary",
+            "tax", "gst", "receipt", "bill", "transaction", "credit", "debit", "loan",
+            "emi", "interest", "budget", "expense", "profit", "loss",
+        ],
+        "Legal_Compliance": [
+            "agreement", "contract", "legal", "law", "clause", "policy", "compliance",
+            "terms", "condition", "nda", "notice",
+        ],
+        "Contacts": [
+            "phone", "mobile", "email", "address", "contact", "whatsapp", "telegram",
+            "call", "name:", "alternate", "landline", "fax", "contact person",
+        ],
+        "HR_Recruitment": [
+            "resume", "cv", "candidate", "interview", "hiring", "employee", "joining",
+            "offer letter", "hr", "attendance", "leave", "payroll",
+        ],
+        "Web_Links": [
+            "http://", "https://", "www.", ".com", ".org", ".net", "link", "url",
+            ".in", ".io", ".co", ".gov", ".edu",
+        ],
+        "Meetings_Work": [
+            "meeting", "agenda", "minutes", "discussion", "project", "client", "team",
+            "status", "update", "target", "milestone", "owner", "stakeholder",
+        ],
+        "Shopping": [
+            "buy", "shopping", "order", "cart", "price", "item", "qty", "quantity",
+            "amazon", "flipkart", "grocery", "wishlist", "discount", "offer", "delivery",
+        ],
+        "Personal_Notes": [
+            "note", "diary", "journal", "thought", "personal", "idea", "plan", "reflection",
+            "goal", "habit",
+        ],
+        "Education": [
+            "study", "exam", "lesson", "course", "class", "chapter", "homework", "assignment",
+            "syllabus", "teacher", "student", "lecture", "tutorial", "quiz",
+        ],
+        "Health_Medical": [
+            "doctor", "hospital", "medicine", "tablet", "dose", "symptom", "diagnosis",
+            "treatment", "appointment", "report", "bp", "sugar",
+        ],
+        "Travel_Transport": [
+            "travel", "trip", "train", "flight", "bus", "cab", "taxi", "booking",
+            "ticket", "pnr", "hotel", "itinerary", "passport", "visa",
+        ],
+        "Media_Content": [
+            "video", "photo", "image", "audio", "music", "youtube", "thumbnail", "editing",
+            "reel", "shorts", "podcast",
+        ],
+        "Banking_Reference": [
+            "ifsc", "swift", "branch", "account number", "beneficiary", "cheque", "neft",
+            "rtgs", "imps",
+        ],
+    }
+
+    def categorize_record(record):
+        if record["read_error"]:
+            return "Read_Errors"
+
+        text_content = record["content"] or ""
+        if not text_content.strip():
+            return "Empty"
+
+        lowered = text_content.lower()
+        filename = Path(record["path"]).name.lower()
+        best_category = "Uncategorized"
+        best_score = 0
+
+        for category, keywords in category_keywords.items():
+            score = 0
+            for keyword in keywords:
+                score += lowered.count(keyword)
+                score += filename.count(keyword)
+            if score > best_score:
+                best_score = score
+                best_category = category
+
+        return best_category if best_score > 0 else "Uncategorized"
+
+    def safe_sheet_name(name):
+        cleaned = re.sub(r"[\\/*?:\[\]]", "_", name)
+        return cleaned[:31] if len(cleaned) > 31 else cleaned
+
+    all_sheet = workbook.active
+    all_sheet.title = "All TXT"
+    setup_sheet(all_sheet)
+    write_records(all_sheet, file_records)
+
+    categorized_records = {}
+    for record in file_records:
+        category = categorize_record(record)
+        if category not in categorized_records:
+            categorized_records[category] = []
+        categorized_records[category].append(record)
+
+    for category_name in sorted(categorized_records.keys()):
+        sheet = workbook.create_sheet(safe_sheet_name(category_name))
+        setup_sheet(sheet)
+        write_records(sheet, categorized_records[category_name])
+
+    workbook.save(output_path)
+
+    print()
+    print("[SUCCESS] OneDrive notepad text export completed.")
+    print(f"Processed files: {processed}")
+    print(f"Failed files:    {failed}")
+    print(f"Categories:      {len(categorized_records)}")
+    for category_name in sorted(categorized_records.keys()):
+        print(f"  - {category_name}: {len(categorized_records[category_name])} file(s)")
+    print(f"Saved to:        {output_path}")
+
+
+# =============================================================================
+# CLEAN QUICK ACCESS
+# =============================================================================
+
+def clean_quick_access(keep_top=3, dry_run=False):
+    """
+    Cleans Windows Explorer Quick Access by:
+      1. Reading actual usage counts from the Windows JumpList AutomaticDestinations file.
+      2. Identifying the top-N most-accessed folders currently pinned/frequent in Quick Access.
+      3. Keeping those top-N, removing/unpinning all others.
+      4. Clearing recent files from Quick Access (only the file entries, not folders).
+
+    Args:
+        keep_top : Number of most-used folder items to retain (default 3).
+        dry_run  : If True, print what would happen without making any changes.
+    """
+    import subprocess
+    import json
+    import struct
+
+    print(f"\n{'='*70}")
+    print(f"CLEAN QUICK ACCESS  (keep_top={keep_top}, dry_run={dry_run})")
+    print(f"{'='*70}")
+
+    # -------------------------------------------------------------------------
+    # Step 1: Read current Quick Access FOLDER items via PowerShell Shell API
+    # -------------------------------------------------------------------------
+    ps_get_folders = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$shell = New-Object -ComObject Shell.Application
+$qa = $shell.Namespace("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}")
+$result = @()
+foreach ($item in $qa.Items()) {
+    $isDir = Test-Path -LiteralPath $item.Path -PathType Container
+    if ($isDir) {
+        $verbs = @($item.Verbs() | ForEach-Object { $_.Name })
+        $isPinned   = ($verbs -contains "Unpin from &Quick access")
+        $removeVerb = if ($isPinned) { "Unpin from &Quick access" } else { "Remo&ve from Quick access" }
+        $result += [PSCustomObject]@{
+            Name       = $item.Name
+            Path       = $item.Path
+            IsPinned   = $isPinned
+            RemoveVerb = $removeVerb
+        }
+    }
+}
+$result | ConvertTo-Json -Depth 2 -Compress
+"""
+    res = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_get_folders],
+        capture_output=True, text=True
+    )
+    raw = res.stdout.strip()
+    if not raw:
+        print("[ERROR] Could not retrieve Quick Access items. Aborting.")
+        return
+
+    qa_folders_raw = json.loads(raw)
+    if isinstance(qa_folders_raw, dict):
+        qa_folders_raw = [qa_folders_raw]
+
+    qa_folders = [
+        {
+            "name":        item["Name"],
+            "path":        item["Path"].rstrip("\\"),
+            "is_pinned":   item["IsPinned"],
+            "remove_verb": item["RemoveVerb"],
+            "access_count": 0,
+        }
+        for item in qa_folders_raw
+    ]
+
+    print(f"\nFound {len(qa_folders)} folder(s) in Quick Access.")
+
+    # -------------------------------------------------------------------------
+    # Step 2: Parse the JumpList DestList for per-folder access counts
+    # -------------------------------------------------------------------------
+    jl_path = (
+        Path(os.environ.get("APPDATA", ""))
+        / r"Microsoft\Windows\Recent\AutomaticDestinations"
+        / "f01b4d95cf55d32a.automaticDestinations-ms"
+    )
+
+    access_map = {}   # normalised_path -> access_count
+    if jl_path.exists():
+        try:
+            import olefile
+            with olefile.OleFileIO(str(jl_path)) as ole:
+                dl = ole.openstream("DestList").read()
+
+            # DestList binary layout (version 6, Windows 10/11):
+            #   Header  : 32 bytes
+            #   Entries : each = 134 bytes (fixed) + path_length*2 bytes (UTF-16LE)
+            #     +88 WORD  : access_count
+            #     +108 DWORD: pin_status (0xFFFFFFFF = pinned by user)
+            #     +128 WORD : path_length (chars)
+            #     +134 ...  : path (UTF-16LE)
+            offset = 32
+            while offset + 134 < len(dl):
+                try:
+                    path_len = struct.unpack_from("<H", dl, offset + 128)[0]
+                    if path_len == 0 or path_len > 512:
+                        break
+                    path_bytes = dl[offset + 134: offset + 134 + path_len * 2]
+                    raw_path = path_bytes.decode("utf-16-le", errors="replace").rstrip("\x00")
+                    access_count = struct.unpack_from("<H", dl, offset + 88)[0]
+                    normalised = raw_path.rstrip("\\").lower()
+                    # Keep the highest count seen for each path
+                    if normalised not in access_map or access_count > access_map[normalised]:
+                        access_map[normalised] = access_count
+                    offset += 134 + path_len * 2
+                except Exception:
+                    break
+            print(f"Parsed {len(access_map)} path(s) from JumpList DestList.")
+        except Exception as exc:
+            print(f"[WARN] Could not parse JumpList ({exc}). Using positional order as fallback.")
+
+    # -------------------------------------------------------------------------
+    # Step 3: Attach access counts to Quick Access folder items
+    # -------------------------------------------------------------------------
+    for item in qa_folders:
+        full_key = item["path"].lower()
+        # JumpList stores paths without drive letter (e.g. \GitRepos\... not D:\GitRepos\...)
+        # Strip drive letter for secondary lookup
+        if len(full_key) >= 2 and full_key[1] == ":":
+            no_drive_key = full_key[2:]   # e.g. \gitrepos\forensics-security\...
+        else:
+            no_drive_key = full_key
+        item["access_count"] = access_map.get(full_key, 0) or access_map.get(no_drive_key, 0)
+
+    # Sort by access count descending — purely by usage frequency
+    qa_folders.sort(key=lambda x: x["access_count"], reverse=True)
+
+    keep_items   = qa_folders[:keep_top]
+    remove_items = qa_folders[keep_top:]
+
+    # -------------------------------------------------------------------------
+    # Step 4: Report plan
+    # -------------------------------------------------------------------------
+    print(f"\n{'-'*50}")
+    print(f"  TOP {keep_top} TO KEEP:")
+    for rank, item in enumerate(keep_items, 1):
+        pinned_tag = "[PINNED]" if item["is_pinned"] else "[frequent]"
+        print(f"    #{rank}  {item['name']:<35} count={item['access_count']}  {pinned_tag}")
+        print(f"         {item['path']}")
+
+    print(f"\n  {len(remove_items)} ITEM(S) TO REMOVE:")
+    for item in remove_items:
+        pinned_tag = "[PINNED]" if item["is_pinned"] else "[frequent]"
+        print(f"    - {item['name']:<35} count={item['access_count']}  {pinned_tag}")
+        print(f"      {item['path']}")
+
+    if dry_run:
+        print(f"\n[DRY RUN] No changes made.")
+        return
+
+    if not remove_items:
+        print(f"\n[INFO] Nothing to remove. Quick Access already has {len(qa_folders)} item(s).")
+        return
+
+    # -------------------------------------------------------------------------
+    # Step 5: Remove unwanted folders from Quick Access via Shell API
+    # -------------------------------------------------------------------------
+    print(f"\n{'-'*50}")
+    print("  Removing items...")
+
+    # Build a PowerShell script that invokes the correct remove verb per item
+    remove_entries = json.dumps(
+        [{"path": i["path"], "verb": i["remove_verb"]} for i in remove_items],
+        ensure_ascii=False
+    )
+    ps_remove = r"""
+param($json)
+$ErrorActionPreference = 'SilentlyContinue'
+$entries = $json | ConvertFrom-Json
+$shell   = New-Object -ComObject Shell.Application
+$qa      = $shell.Namespace("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}")
+$removed = 0
+$failed  = 0
+foreach ($entry in $entries) {
+    $matched = $false
+    foreach ($item in $qa.Items()) {
+        if ($item.Path -eq $entry.path) {
+            $verb = $item.Verbs() | Where-Object { $_.Name -eq $entry.verb } | Select-Object -First 1
+            if ($verb) {
+                $verb.DoIt()
+                Write-Host "REMOVED: $($item.Name)"
+                $removed++
+            } else {
+                Write-Host "NO_VERB: $($item.Name) (verb='$($entry.verb)' not found)"
+                $failed++
+            }
+            $matched = $true
+            break
+        }
+    }
+    if (-not $matched) {
+        Write-Host "NOT_FOUND: $($entry.path)"
+        $failed++
+    }
+}
+Write-Host "DONE removed=$removed failed=$failed"
+"""
+    res2 = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_remove, "-json", remove_entries],
+        capture_output=True, text=True
+    )
+    for line in res2.stdout.strip().splitlines():
+        print(f"  {line}")
+
+    # -------------------------------------------------------------------------
+    # Step 6: Clear recent FILES from Quick Access (not folders)
+    # -------------------------------------------------------------------------
+    recent_dir = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Recent"
+    cleared = 0
+    if recent_dir.exists():
+        for lnk in recent_dir.glob("*.lnk"):
+            try:
+                lnk.unlink()
+                cleared += 1
+            except Exception:
+                pass
+        print(f"\n  Cleared {cleared} recent file shortcut(s) from Quick Access.")
+
+    print(f"\n[DONE] Quick Access cleaned. Kept top {keep_top} folder(s), removed {len(remove_items)}, cleared {cleared} recent file(s).")
+    print(f"{'='*70}\n")
